@@ -127,6 +127,12 @@ Get started with 'Glassbox debug --help' or visit the documentation.`,
 			logger.SetLevel(logger.ParseLevel(LogLevelFlag))
 		}
 
+		// Assign a correlation ID for this CLI invocation and emit a debug log
+		// so that GLASSBOX_LOG_LEVEL=debug output carries the operation_id on
+		// every subsequent log record.
+		_, opID := logger.WithOperation(cmd.Context())
+		logger.Logger.Debug("Operation started", "operation_id", opID)
+
 		// Handle deep link probe invocation before anything else.
 		// The doctor command triggers this to verify OS dispatch works.
 		if DeepLinkFlag != "" {
