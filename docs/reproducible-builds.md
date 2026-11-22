@@ -15,7 +15,7 @@ what was published without trusting the CI environment.
 | `glassbox-darwin-arm64` | Reproducible | Same |
 | `glassbox-windows-amd64.exe` | Reproducible | Same |
 | `*.tar.gz` | Reproducible | `--sort=name`, `--mtime=@EPOCH`, `--owner=0` |
-| `*.zip` | Reproducible | `zip -X` strips metadata |
+| `*.zip` | Reproducible | `zip --no-dir-entries -X` strips metadata |
 | `checksums.sha256` | Reproducible | `LC_ALL=C sort` for stable ordering |
 | Rust simulator binary | Partial | Depends on `rust-toolchain.toml` pin |
 | TypeScript `dist/` | Best-effort | `npm ci` + pinned `package-lock.json` |
@@ -27,9 +27,9 @@ at the repository root and enforced in CI.
 
 | Ecosystem | Pin location | Current version |
 |-----------|-------------|-----------------|
-| Go | `go.mod` (`go` directive) + `setup-go` `go-version-file` | 1.24.x |
+| Go | `go.mod` (`go` directive) + `setup-go` `go-version-file` | 1.26 |
 | Rust | [`rust-toolchain.toml`](../rust-toolchain.toml) | 1.86.0 |
-| Node | `setup-node` `node-version` in CI + `toolchain.json` | 20.19.0 LTS |
+| Node | `setup-node` `node-version` in CI workflows | 20 (LTS) |
 | npm packages | `package-lock.json` (committed) | — |
 | Go modules | `go.sum` (committed) | — |
 | Cargo crates | `Cargo.lock` (committed) | — |
@@ -57,6 +57,12 @@ and `/Users/alice/go/pkg` produce different binaries.
 timestamp of the HEAD commit), not from the wall clock, so it is the same in
 every build of the same commit.
 
+> **Makefile note:** `BUILD_DATE` in the Makefile is computed from
+> `SOURCE_DATE_EPOCH` using `date -u -d @EPOCH` (GNU/Linux) or
+> `date -u -r EPOCH` (BSD/macOS). It must not be derived from `date -u`
+> without the epoch argument, as wall-clock time differs between machines and
+> build runs.
+
 **`CGO_ENABLED=0`** disables the C toolchain entirely. CGO output includes host
 paths and can vary between systems.
 
@@ -73,9 +79,10 @@ during the build, which varies.
 **`--owner=0 --group=0 --numeric-owner`** strips UID/GID names. A file owned
 by `runner` on GitHub Actions vs `alice` locally would otherwise differ.
 
-**`zip -X`** (`--no-dir-entries`) strips the "extra field" metadata that zip
-normally records (OS type, timestamps in extended attributes) to produce a
-deterministic archive.
+**`zip --no-dir-entries -X`** — `--no-dir-entries` (`-D`) omits directory
+entries so the archive contains only files, and `-X` (`--no-extra`) strips the
+"extra field" metadata that zip normally records (OS type, timestamps, extended
+attributes) to produce a deterministic archive.
 
 ### Checksums file
 
@@ -101,12 +108,27 @@ Reference: <https://reproducible-builds.org/docs/source-date-epoch/>
 ### Quick check (one target)
 
 ```bash
-# Verify linux/amd64 is reproducible on your machine
+# Verify linux/amd64 is reproducible on your machine (default)
 make reproducibility-check
 
-# Or specify a different target
+# Supported targets: linux-amd64, linux-arm64, darwin-amd64, darwin-arm64, windows-amd64
 bash scripts/check-reproducibility.sh linux-arm64
+
+# Windows produces a reproducible .zip instead of a .tar.gz
+bash scripts/check-reproducibility.sh windows-amd64
 ```
+
+> **darwin and windows targets:** `check-reproducibility.sh` cross-compiles
+> (`GOOS=darwin` / `GOOS=windows`) and compares the resulting binaries and
+> archives. The compilation step runs on any host with Go installed; no macOS
+> machine or Wine installation is required to verify that two builds produce
+> identical bytes. Executing the darwin or Windows binary is a separate step
+> (see `scripts/verify-release.sh`).
+>
+> In CI, `scripts/verify-release.sh` smoke-tests each binary on the native
+> runner where possible. For darwin binaries built on a Linux CI runner the
+> execution tests are reported as `[SKIP-UNAVAILABLE]` — this is expected and
+> does not indicate a build failure. The presence and SHA-256 checks still run.
 
 Expected output when reproducible:
 
@@ -215,7 +237,7 @@ Work through this checklist:
    code.
 
 6. **Different Go toolchain** — Confirm both builds use the exact same Go
-   version. A minor version difference (1.24.3 vs 1.24.4) can change binary
+   version. A patch-level difference (e.g. 1.26.0 vs 1.26.1) can change binary
    content.
 
 ### Archive hashes differ but binary hashes match
